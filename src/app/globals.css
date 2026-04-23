@@ -1,26 +1,122 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f6f3ef;
+  --surface: #ffffff;
+  --surface-soft: #fbf8f4;
+  --border: #e7ddd2;
+
+  --brand-red: #8f1d22;
+  --brand-red-dark: #7a171c;
+  --brand-red-soft: #f3e4e1;
+
+  --brand-olive: #b7b47a;
+
+  --text-primary: #26252b;
+  --text-secondary: #3b3a40;
+  --text-muted: #6f6c72;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  scroll-behavior: smooth;
 }
 
 body {
+  margin: 0;
   background: var(--background);
-  color: var(--foreground);
+  color: var(--text-primary);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+input,
+select,
+textarea {
+  background: white;
+  color: var(--text-primary);
+}
+
+button {
+  cursor: pointer;
+}
+
+.hbkcc-page {
+  min-height: calc(100vh - 96px);
+  background: var(--background);
+}
+
+.hbkcc-shell {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 2.25rem 2rem 3rem;
+}
+
+.hbkcc-card {
+  background: var(--surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  box-shadow: 0 10px 30px rgba(25, 25, 35, 0.05);
+}
+
+.hbkcc-soft-card {
+  background: var(--surface-soft);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+}
+
+.hbkcc-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  background: white;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.hbkcc-input:focus {
+  outline: none;
+  border-color: var(--brand-olive);
+  box-shadow: 0 0 0 3px rgba(183, 180, 122, 0.16);
+}
+
+.hbkcc-primary-btn {
+  background: var(--brand-red);
+  color: white;
+  border-radius: 14px;
+  padding: 0.82rem 1.1rem;
+  font-weight: 700;
+  transition: 0.2s ease;
+}
+
+.hbkcc-primary-btn:hover {
+  background: var(--brand-red-dark);
+}
+
+.hbkcc-danger-btn {
+  background: #c83a3f;
+  color: white;
+  border-radius: 14px;
+  padding: 0.82rem 1.1rem;
+  font-weight: 700;
+  transition: 0.2s ease;
+}
+
+.hbkcc-danger-btn:hover {
+  background: #b02d32;
+}
+
+.hbkcc-link-btn {
+  color: var(--brand-red);
+  font-weight: 600;
+}
+
+.hbkcc-link-btn:hover {
+  text-decoration: underline;
 }
