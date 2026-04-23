@@ -77,6 +77,8 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
+  const currentUserId = user.id;
+
   const { data: existingProfile } = await supabase
     .from("profiles")
     .select("*")
@@ -769,7 +771,7 @@ export default async function DashboardPage() {
                         profile?.role === "admin" || profile?.role === "teacher";
 
                       const isOwnStudentRow =
-                        profile?.role === "student" && student.user_id === user.id;
+                        profile?.role === "student" && student.user_id === currentUserId;
 
                       if (profile?.role === "student" && !isOwnStudentRow) {
                         return null;
