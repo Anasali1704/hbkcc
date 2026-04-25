@@ -9,18 +9,8 @@ type EnrollmentRow = {
   user_id: string;
   classes: { name: string } | { name: string }[] | null;
   profiles:
-    | {
-        email: string;
-        role: string;
-        full_name: string | null;
-        phone: string | null;
-      }
-    | {
-        email: string;
-        role: string;
-        full_name: string | null;
-        phone: string | null;
-      }[]
+    | { email: string; role: string; full_name: string | null; phone: string | null }
+    | { email: string; role: string; full_name: string | null; phone: string | null }[]
     | null;
 };
 
@@ -29,9 +19,17 @@ type ClassRow = {
   name: string;
 };
 
+type SemesterRow = {
+  id: string;
+  class_id: string;
+  name: string;
+  sort_order: number;
+};
+
 type LessonRow = {
   id: string;
   class_id: string;
+  semester_id: string | null;
   title: string;
   description: string | null;
   lesson_date: string;
@@ -65,7 +63,12 @@ type LessonResourceRow = {
   created_at: string;
 };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ class?: string; semester?: string }>;
+}) {
+  const params = await searchParams;
   const supabase = await createClient();
 
   const {
@@ -104,28 +107,31 @@ export default async function DashboardPage() {
     .select("*")
     .order("name", { ascending: true });
 
+  const { data: semestersRaw } = await supabase
+    .from("semesters")
+    .select("*")
+    .order("sort_order", { ascending: true });
+
   const { data: users } = await supabase
     .from("profiles")
     .select("*")
     .order("email", { ascending: true });
 
   const { data: enrollmentsRaw } = await supabase.from("enrollments").select(`
-      id,
-      role,
-      class_id,
-      user_id,
-      classes(name),
-      profiles(email, role, full_name, phone)
-    `);
+    id,
+    role,
+    class_id,
+    user_id,
+    classes(name),
+    profiles(email, role, full_name, phone)
+  `);
 
   const { data: lessonsRaw } = await supabase
     .from("lessons")
     .select("*")
     .order("lesson_date", { ascending: true });
 
-  const { data: attendanceRaw } = await supabase
-    .from("attendance")
-    .select("*");
+  const { data: attendanceRaw } = await supabase.from("attendance").select("*");
 
   const { data: classFilesRaw } = await supabase
     .from("class_files")
@@ -139,6 +145,7 @@ export default async function DashboardPage() {
 
   const enrollments = (enrollmentsRaw ?? []) as EnrollmentRow[];
   const classList = (classes ?? []) as ClassRow[];
+  const semesters = (semestersRaw ?? []) as SemesterRow[];
   const lessons = (lessonsRaw ?? []) as LessonRow[];
   const attendance = (attendanceRaw ?? []) as AttendanceRow[];
   const classFiles = (classFilesRaw ?? []) as ClassFileRow[];
@@ -146,28 +153,50 @@ export default async function DashboardPage() {
 
   const myTeacherClasses = classList.filter((c) =>
     enrollments.some(
-      (e) => e.class_id === c.id && e.user_id === user.id && e.role === "teacher"
+      (e) => e.class_id === c.id && e.user_id === currentUserId && e.role === "teacher"
     )
   );
 
   const myStudentClasses = classList.filter((c) =>
     enrollments.some(
-      (e) => e.class_id === c.id && e.user_id === user.id && e.role === "student"
+      (e) => e.class_id === c.id && e.user_id === currentUserId && e.role === "student"
     )
   );
 
+  const visibleClasses =
+    profile?.role === "admin"
+      ? classList
+      : profile?.role === "teacher"
+      ? myTeacherClasses
+      : myStudentClasses;
+
+  const selectedClassId =
+    params.class ?? visibleClasses[0]?.id ?? classList[0]?.id ?? "";
+
+  const semestersForClass = semesters.filter((s) => s.class_id === selectedClassId);
+
+  const selectedSemesterId = params.semester ?? semestersForClass[0]?.id ?? "";
+
+  const selectedClass = classList.find((c) => c.id === selectedClassId);
+  const selectedSemester = semesters.find((s) => s.id === selectedSemesterId);
+
   async function createClass(formData: FormData) {
     "use server";
+
     const name = formData.get("name") as string;
     const supabase = await createClient();
+
     await supabase.from("classes").insert({ name });
+
     revalidatePath("/dashboard");
   }
 
   async function addStudentToClass(formData: FormData) {
     "use server";
+
     const userId = formData.get("userId") as string;
     const classId = formData.get("classId") as string;
+
     const supabase = await createClient();
 
     const { data: existing } = await supabase
@@ -191,8 +220,10 @@ export default async function DashboardPage() {
 
   async function addTeacherToClass(formData: FormData) {
     "use server";
+
     const userId = formData.get("teacherId") as string;
     const classId = formData.get("teacherClassId") as string;
+
     const supabase = await createClient();
 
     const { data: existing } = await supabase
@@ -216,10 +247,13 @@ export default async function DashboardPage() {
 
   async function createLesson(formData: FormData) {
     "use server";
+
     const classId = formData.get("lessonClassId") as string;
+    const semesterId = formData.get("semesterId") as string;
     const title = formData.get("title") as string;
     const description = formData.get("description") as string;
     const lessonDate = formData.get("lessonDate") as string;
+
     const supabase = await createClient();
 
     const {
@@ -230,6 +264,7 @@ export default async function DashboardPage() {
 
     await supabase.from("lessons").insert({
       class_id: classId,
+      semester_id: semesterId || null,
       title,
       description: description || null,
       lesson_date: lessonDate,
@@ -241,9 +276,11 @@ export default async function DashboardPage() {
 
   async function markAttendance(formData: FormData) {
     "use server";
+
     const lessonId = formData.get("lessonId") as string;
     const userId = formData.get("userId") as string;
     const status = formData.get("status") as string;
+
     const supabase = await createClient();
 
     const { data: existing } = await supabase
@@ -277,6 +314,7 @@ export default async function DashboardPage() {
       if (!file || file.size === 0) return;
 
       const supabase = await createClient();
+
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -333,6 +371,7 @@ export default async function DashboardPage() {
       if (!file || file.size === 0) return;
 
       const supabase = await createClient();
+
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -382,6 +421,7 @@ export default async function DashboardPage() {
 
   async function deleteLessonResource(formData: FormData) {
     "use server";
+
     const resourceId = formData.get("resourceId") as string;
     const supabase = await createClient();
 
@@ -400,22 +440,16 @@ export default async function DashboardPage() {
     if (!resource) return;
 
     if (resource.type === "file" && resource.file_path) {
-      const { error: storageError } = await supabase.storage
-        .from("class-files")
-        .remove([resource.file_path]);
-
-      if (storageError) {
-        console.error("DELETE STORAGE ERROR:", storageError);
-      }
+      await supabase.storage.from("class-files").remove([resource.file_path]);
     }
 
-    const { error: deleteError } = await supabase
+    const { error } = await supabase
       .from("lesson_resources")
       .delete()
       .eq("id", resourceId);
 
-    if (deleteError) {
-      console.error("DELETE RESOURCE ERROR:", deleteError);
+    if (error) {
+      console.error("DELETE RESOURCE ERROR:", error);
       return;
     }
 
@@ -424,6 +458,7 @@ export default async function DashboardPage() {
 
   async function deleteClassFile(formData: FormData) {
     "use server";
+
     const fileId = formData.get("fileId") as string;
     const supabase = await createClient();
 
@@ -445,22 +480,13 @@ export default async function DashboardPage() {
     }
 
     if (file.file_path) {
-      const { error: storageError } = await supabase.storage
-        .from("class-files")
-        .remove([file.file_path]);
-
-      if (storageError) {
-        console.error("DELETE CLASS FILE STORAGE ERROR:", storageError);
-      }
+      await supabase.storage.from("class-files").remove([file.file_path]);
     }
 
-    const { error: deleteError } = await supabase
-      .from("class_files")
-      .delete()
-      .eq("id", fileId);
+    const { error } = await supabase.from("class_files").delete().eq("id", fileId);
 
-    if (deleteError) {
-      console.error("DELETE CLASS FILE DB ERROR:", deleteError);
+    if (error) {
+      console.error("DELETE CLASS FILE DB ERROR:", error);
       return;
     }
 
@@ -469,10 +495,12 @@ export default async function DashboardPage() {
 
   async function updateLesson(formData: FormData) {
     "use server";
+
     const lessonId = formData.get("lessonId") as string;
     const title = formData.get("editTitle") as string;
     const description = formData.get("editDescription") as string;
     const lessonDate = formData.get("editLessonDate") as string;
+
     const supabase = await createClient();
 
     const {
@@ -500,6 +528,7 @@ export default async function DashboardPage() {
 
   async function deleteLesson(formData: FormData) {
     "use server";
+
     const lessonId = formData.get("lessonId") as string;
     const supabase = await createClient();
 
@@ -509,10 +538,7 @@ export default async function DashboardPage() {
 
     if (!user) return;
 
-    const { error } = await supabase
-      .from("lessons")
-      .delete()
-      .eq("id", lessonId);
+    const { error } = await supabase.from("lessons").delete().eq("id", lessonId);
 
     if (error) {
       console.error("DELETE LESSON ERROR:", error);
@@ -524,10 +550,12 @@ export default async function DashboardPage() {
 
   async function addLessonLink(formData: FormData) {
     "use server";
+
     const lessonId = formData.get("lessonId") as string;
     const title = formData.get("linkTitle") as string;
     const description = formData.get("linkDescription") as string;
     const url = formData.get("linkUrl") as string;
+
     const supabase = await createClient();
 
     const {
@@ -564,14 +592,24 @@ export default async function DashboardPage() {
     return profile?.phone || "";
   }
 
+  function renderPerson(profileValue: EnrollmentRow["profiles"]) {
+    return (
+      <div>
+        <div className="font-medium text-stone-900">{getDisplayName(profileValue)}</div>
+        {getDisplayPhone(profileValue) && (
+          <div className="text-sm text-stone-500">{getDisplayPhone(profileValue)}</div>
+        )}
+      </div>
+    );
+  }
+
   function renderFileList(classId: string) {
     const filesForClass = classFiles.filter((file) => file.class_id === classId);
+    const canDelete = profile?.role === "admin" || profile?.role === "teacher";
 
     if (filesForClass.length === 0) {
       return <p className="mt-2 text-sm text-stone-500">Ingen filer endnu.</p>;
     }
-
-    const canDelete = profile?.role === "admin" || profile?.role === "teacher";
 
     return (
       <ul className="mt-3 space-y-3">
@@ -580,11 +618,9 @@ export default async function DashboardPage() {
             key={file.id}
             className="flex items-start justify-between gap-4 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3"
           >
-            <div className="min-w-0">
-              <div className="font-medium text-stone-900">{file.title}</div>
-            </div>
+            <div className="font-medium text-stone-900">{file.title}</div>
 
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex items-center gap-2">
               <a
                 href={`/api/files?path=${encodeURIComponent(file.file_path)}`}
                 className="rounded-lg px-3 py-2 text-sm font-medium text-[#8f1d22] hover:bg-[#f3e4e1]"
@@ -609,12 +645,11 @@ export default async function DashboardPage() {
 
   function renderLessonResources(lessonId: string) {
     const resources = lessonResources.filter((r) => r.lesson_id === lessonId);
+    const canDelete = profile?.role === "admin" || profile?.role === "teacher";
 
     if (resources.length === 0) {
       return <p className="mt-2 text-sm text-stone-500">Ingen materialer endnu.</p>;
     }
-
-    const canDelete = profile?.role === "admin" || profile?.role === "teacher";
 
     return (
       <ul className="mt-3 space-y-3">
@@ -624,11 +659,13 @@ export default async function DashboardPage() {
             className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3"
           >
             <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
+              <div>
                 <div className="font-medium text-stone-900">{resource.title}</div>
 
                 {resource.description && (
-                  <div className="mt-1 text-sm text-stone-500">{resource.description}</div>
+                  <div className="mt-1 text-sm text-stone-500">
+                    {resource.description}
+                  </div>
                 )}
 
                 <div className="mt-3">
@@ -670,7 +707,11 @@ export default async function DashboardPage() {
   }
 
   function renderLessonList(classId: string) {
-    const classLessons = lessons.filter((lesson) => lesson.class_id === classId);
+    const classLessons = lessons.filter(
+      (lesson) =>
+        lesson.class_id === classId &&
+        lesson.semester_id === selectedSemesterId
+    );
 
     if (classLessons.length === 0) {
       return <p className="mt-2 text-sm text-stone-500">Ingen lektioner endnu.</p>;
@@ -688,11 +729,11 @@ export default async function DashboardPage() {
               key={lesson.id}
               className="rounded-3xl border border-stone-200 bg-stone-50 px-5 py-5"
             >
-              <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <div className="text-lg font-semibold text-stone-900">{lesson.title}</div>
-                  <div className="text-sm text-stone-500">{lesson.lesson_date}</div>
+              <div>
+                <div className="text-lg font-semibold text-stone-900">
+                  {lesson.title}
                 </div>
+                <div className="text-sm text-stone-500">{lesson.lesson_date}</div>
               </div>
 
               {lesson.description && (
@@ -703,7 +744,9 @@ export default async function DashboardPage() {
 
               {(profile?.role === "admin" || profile?.role === "teacher") && (
                 <div className="mt-5 space-y-3 border-t border-stone-200 pt-4">
-                  <h4 className="text-sm font-semibold text-stone-900">Redigér lektion</h4>
+                  <h4 className="text-sm font-semibold text-stone-900">
+                    Redigér lektion
+                  </h4>
 
                   <form action={updateLesson} className="grid gap-3">
                     <input type="hidden" name="lessonId" value={lesson.id} />
@@ -730,11 +773,9 @@ export default async function DashboardPage() {
                       className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
                     />
 
-                    <div className="flex gap-2">
-                      <button className="w-fit rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
-                        Gem ændringer
-                      </button>
-                    </div>
+                    <button className="w-fit rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
+                      Gem ændringer
+                    </button>
                   </form>
 
                   <form action={deleteLesson}>
@@ -758,11 +799,14 @@ export default async function DashboardPage() {
                         ? student.profiles[0]
                         : student.profiles;
 
-                      const studentName = studentProfile?.full_name || studentProfile?.email;
+                      const studentName =
+                        studentProfile?.full_name || studentProfile?.email;
                       const studentPhone = studentProfile?.phone || "";
 
                       const attendanceRow = attendance.find(
-                        (a) => a.lesson_id === lesson.id && a.user_id === student.user_id
+                        (a) =>
+                          a.lesson_id === lesson.id &&
+                          a.user_id === student.user_id
                       );
 
                       const status = attendanceRow?.status;
@@ -771,7 +815,8 @@ export default async function DashboardPage() {
                         profile?.role === "admin" || profile?.role === "teacher";
 
                       const isOwnStudentRow =
-                        profile?.role === "student" && student.user_id === currentUserId;
+                        profile?.role === "student" &&
+                        student.user_id === currentUserId;
 
                       if (profile?.role === "student" && !isOwnStudentRow) {
                         return null;
@@ -784,9 +829,13 @@ export default async function DashboardPage() {
                         >
                           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                             <div>
-                              <div className="font-medium text-stone-900">{studentName}</div>
+                              <div className="font-medium text-stone-900">
+                                {studentName}
+                              </div>
                               {studentPhone && (
-                                <div className="mt-1 text-sm text-stone-500">{studentPhone}</div>
+                                <div className="mt-1 text-sm text-stone-500">
+                                  {studentPhone}
+                                </div>
                               )}
                               <div className="mt-1 text-sm text-stone-500">
                                 Status:{" "}
@@ -801,18 +850,42 @@ export default async function DashboardPage() {
                             {canEditAttendance && (
                               <div className="flex gap-2">
                                 <form action={markAttendance}>
-                                  <input type="hidden" name="lessonId" value={lesson.id} />
-                                  <input type="hidden" name="userId" value={student.user_id} />
-                                  <input type="hidden" name="status" value="present" />
+                                  <input
+                                    type="hidden"
+                                    name="lessonId"
+                                    value={lesson.id}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="userId"
+                                    value={student.user_id}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="status"
+                                    value="present"
+                                  />
                                   <button className="rounded-lg bg-green-600 px-3 py-2 text-sm font-medium text-white">
                                     Tilstede
                                   </button>
                                 </form>
 
                                 <form action={markAttendance}>
-                                  <input type="hidden" name="lessonId" value={lesson.id} />
-                                  <input type="hidden" name="userId" value={student.user_id} />
-                                  <input type="hidden" name="status" value="absent" />
+                                  <input
+                                    type="hidden"
+                                    name="lessonId"
+                                    value={lesson.id}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="userId"
+                                    value={student.user_id}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="status"
+                                    value="absent"
+                                  />
                                   <button className="rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white">
                                     Fravær
                                   </button>
@@ -828,7 +901,9 @@ export default async function DashboardPage() {
               </div>
 
               <div className="mt-5">
-                <h4 className="mb-2 text-sm font-semibold text-stone-900">Materialer</h4>
+                <h4 className="mb-2 text-sm font-semibold text-stone-900">
+                  Materialer
+                </h4>
                 {renderLessonResources(lesson.id)}
               </div>
 
@@ -918,21 +993,68 @@ export default async function DashboardPage() {
           <h1 className="mb-2 text-4xl font-bold tracking-tight text-stone-900">
             Lektionsplan
           </h1>
-          <p className="mb-8 text-stone-500">HBKCC Undervisning · Pre Mahaad</p>
 
-          <div className="mb-8 space-y-2 text-stone-700">
+          <p className="mb-8 text-stone-500">
+            HBKCC Undervisning · Pre Mahaad
+          </p>
+
+          <div className="mb-6 flex flex-wrap gap-3">
+            {visibleClasses.map((c) => (
+              <a
+                key={c.id}
+                href={`/dashboard?class=${c.id}`}
+                className={`rounded-full px-4 py-2 text-sm font-medium ${
+                  selectedClassId === c.id
+                    ? "bg-[#8f1d22] text-white"
+                    : "bg-stone-100 text-stone-700"
+                }`}
+              >
+                {c.name}
+              </a>
+            ))}
+          </div>
+
+          <div className="mb-8 flex flex-wrap gap-2">
+            {semestersForClass.map((s) => (
+              <a
+                key={s.id}
+                href={`/dashboard?class=${selectedClassId}&semester=${s.id}`}
+                className={`rounded-full px-4 py-2 text-sm font-medium ${
+                  selectedSemesterId === s.id
+                    ? "bg-[#8f1d22] text-white"
+                    : "bg-stone-100 text-stone-700"
+                }`}
+              >
+                {s.name}
+              </a>
+            ))}
+          </div>
+
+          <div className="mb-8 rounded-2xl bg-stone-50 px-5 py-4 text-stone-700">
             <p>
               <strong>Email:</strong> {user.email}
             </p>
             <p>
               <strong>Rolle:</strong> {profile?.role}
             </p>
+            {selectedClass && (
+              <p>
+                <strong>Valgt hold:</strong> {selectedClass.name}
+              </p>
+            )}
+            {selectedSemester && (
+              <p>
+                <strong>Valgt semester:</strong> {selectedSemester.name}
+              </p>
+            )}
           </div>
 
           {profile?.role === "admin" && (
             <div className="space-y-10">
               <section className="rounded-3xl border border-stone-200 bg-stone-50 p-6">
-                <h2 className="mb-4 text-xl font-semibold text-stone-900">Opret hold</h2>
+                <h2 className="mb-4 text-xl font-semibold text-stone-900">
+                  Opret hold
+                </h2>
                 <form action={createClass} className="flex gap-3">
                   <input
                     name="name"
@@ -961,7 +1083,9 @@ export default async function DashboardPage() {
                       ?.filter((u) => u.role === "student")
                       .map((u) => (
                         <option key={u.id} value={u.id}>
-                          {u.full_name ? `${u.full_name} · ${u.phone || u.email}` : u.email}
+                          {u.full_name
+                            ? `${u.full_name} · ${u.phone || u.email}`
+                            : u.email}
                         </option>
                       ))}
                   </select>
@@ -969,6 +1093,7 @@ export default async function DashboardPage() {
                   <select
                     name="classId"
                     required
+                    defaultValue={selectedClassId}
                     className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
                   >
                     <option value="">Vælg hold</option>
@@ -1000,7 +1125,9 @@ export default async function DashboardPage() {
                       ?.filter((u) => u.role === "teacher")
                       .map((u) => (
                         <option key={u.id} value={u.id}>
-                          {u.full_name ? `${u.full_name} · ${u.phone || u.email}` : u.email}
+                          {u.full_name
+                            ? `${u.full_name} · ${u.phone || u.email}`
+                            : u.email}
                         </option>
                       ))}
                   </select>
@@ -1008,6 +1135,7 @@ export default async function DashboardPage() {
                   <select
                     name="teacherClassId"
                     required
+                    defaultValue={selectedClassId}
                     className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
                   >
                     <option value="">Vælg hold</option>
@@ -1023,295 +1151,125 @@ export default async function DashboardPage() {
                   </button>
                 </form>
               </section>
-
-              <section className="rounded-3xl border border-stone-200 bg-stone-50 p-6">
-                <h2 className="mb-4 text-xl font-semibold text-stone-900">Opret lektion</h2>
-                <form action={createLesson} className="grid gap-3">
-                  <select
-                    name="lessonClassId"
-                    required
-                    className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                  >
-                    <option value="">Vælg hold</option>
-                    {classList.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-
-                  <input
-                    name="title"
-                    placeholder="Lektionstitel"
-                    required
-                    className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                  />
-
-                  <input
-                    type="date"
-                    name="lessonDate"
-                    required
-                    className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                  />
-
-                  <textarea
-                    name="description"
-                    placeholder="Beskrivelse / lektionsplan"
-                    rows={4}
-                    className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                  />
-
-                  <button className="w-fit rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
-                    Opret lektion
-                  </button>
-                </form>
-              </section>
-
-              <section className="rounded-3xl border border-stone-200 bg-stone-50 p-6">
-                <h2 className="mb-4 text-xl font-semibold text-stone-900">
-                  Upload fil til hold
-                </h2>
-                <form action={uploadClassFile} className="grid gap-3">
-                  <select
-                    name="fileClassId"
-                    required
-                    className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                  >
-                    <option value="">Vælg hold</option>
-                    {classList.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-
-                  <input
-                    name="fileTitle"
-                    placeholder="Filens titel"
-                    required
-                    className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                  />
-
-                  <input
-                    type="file"
-                    name="file"
-                    required
-                    className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                  />
-
-                  <button className="w-fit rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
-                    Upload fil
-                  </button>
-                </form>
-              </section>
             </div>
           )}
 
-          {profile?.role === "teacher" && (
-            <section className="mt-10">
+          {(profile?.role === "admin" || profile?.role === "teacher") && selectedClassId && (
+            <section className="mt-10 rounded-3xl border border-stone-200 bg-stone-50 p-6">
               <h2 className="mb-4 text-xl font-semibold text-stone-900">
-                Mine hold som underviser
+                Opret lektion i {selectedSemester?.name ?? "valgt semester"}
               </h2>
 
-              {myTeacherClasses.length === 0 ? (
-                <p className="text-stone-500">Du er ikke tilknyttet nogen hold endnu.</p>
-              ) : (
-                <div className="space-y-6">
-                  {myTeacherClasses.map((c) => (
-                    <div
-                      key={c.id}
-                      className="rounded-3xl border border-stone-200 bg-stone-50 p-6"
-                    >
-                      <div className="text-lg font-semibold text-stone-900">{c.name}</div>
+              <form action={createLesson} className="grid gap-3">
+                <input type="hidden" name="lessonClassId" value={selectedClassId} />
+                <input type="hidden" name="semesterId" value={selectedSemesterId} />
 
-                      <div className="mt-5">
-                        <h3 className="font-semibold text-stone-900">Lektionsplan</h3>
-                        {renderLessonList(c.id)}
-                      </div>
+                <input
+                  name="title"
+                  placeholder="Lektionstitel"
+                  required
+                  className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+                />
 
-                      <div className="mt-5">
-                        <h3 className="font-semibold text-stone-900">Filer</h3>
-                        {renderFileList(c.id)}
-                      </div>
+                <input
+                  type="date"
+                  name="lessonDate"
+                  required
+                  className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+                />
 
-                      <div className="mt-5">
-                        <h3 className="mb-2 font-semibold text-stone-900">Opret lektion</h3>
-                        <form action={createLesson} className="grid gap-3">
-                          <input type="hidden" name="lessonClassId" value={c.id} />
+                <textarea
+                  name="description"
+                  placeholder="Beskrivelse / lektionsplan"
+                  rows={4}
+                  className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+                />
 
-                          <input
-                            name="title"
-                            placeholder="Lektionstitel"
-                            required
-                            className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                          />
-
-                          <input
-                            type="date"
-                            name="lessonDate"
-                            required
-                            className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                          />
-
-                          <textarea
-                            name="description"
-                            placeholder="Beskrivelse / lektionsplan"
-                            rows={4}
-                            className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                          />
-
-                          <button className="w-fit rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
-                            Opret lektion
-                          </button>
-                        </form>
-                      </div>
-
-                      <div className="mt-5">
-                        <h3 className="mb-2 font-semibold text-stone-900">Upload fil</h3>
-                        <form action={uploadClassFile} className="grid gap-3">
-                          <input type="hidden" name="fileClassId" value={c.id} />
-
-                          <input
-                            name="fileTitle"
-                            placeholder="Filens titel"
-                            required
-                            className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                          />
-
-                          <input
-                            type="file"
-                            name="file"
-                            required
-                            className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
-                          />
-
-                          <button className="w-fit rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
-                            Upload fil
-                          </button>
-                        </form>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                <button className="w-fit rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
+                  Opret lektion
+                </button>
+              </form>
             </section>
           )}
 
-          {profile?.role === "student" && (
+          {selectedClassId && (
             <section className="mt-10">
               <h2 className="mb-4 text-xl font-semibold text-stone-900">
-                Mine hold som elev
+                {selectedClass?.name ?? "Valgt hold"} ·{" "}
+                {selectedSemester?.name ?? "Vælg semester"}
               </h2>
 
-              {myStudentClasses.length === 0 ? (
-                <p className="text-stone-500">Du er ikke tilknyttet nogen hold endnu.</p>
-              ) : (
-                <div className="space-y-6">
-                  {myStudentClasses.map((c) => (
-                    <div
-                      key={c.id}
-                      className="rounded-3xl border border-stone-200 bg-stone-50 p-6"
-                    >
-                      <div className="text-lg font-semibold text-stone-900">{c.name}</div>
+              <div className="rounded-3xl border border-stone-200 bg-stone-50 p-6">
+                <h3 className="font-semibold text-stone-900">Lektionsplan</h3>
+                {renderLessonList(selectedClassId)}
+              </div>
 
-                      <div className="mt-5">
-                        <h3 className="font-semibold text-stone-900">Lektionsplan</h3>
-                        {renderLessonList(c.id)}
-                      </div>
+              <div className="mt-6 rounded-3xl border border-stone-200 bg-stone-50 p-6">
+                <h3 className="font-semibold text-stone-900">Filer</h3>
+                {renderFileList(selectedClassId)}
 
-                      <div className="mt-5">
-                        <h3 className="font-semibold text-stone-900">Filer</h3>
-                        {renderFileList(c.id)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                {(profile?.role === "admin" || profile?.role === "teacher") && (
+                  <div className="mt-5">
+                    <h3 className="mb-2 font-semibold text-stone-900">
+                      Upload fil til hold
+                    </h3>
+
+                    <form action={uploadClassFile} className="grid gap-3">
+                      <input type="hidden" name="fileClassId" value={selectedClassId} />
+
+                      <input
+                        name="fileTitle"
+                        placeholder="Filens titel"
+                        required
+                        className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+                      />
+
+                      <input
+                        type="file"
+                        name="file"
+                        required
+                        className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+                      />
+
+                      <button className="w-fit rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
+                        Upload fil
+                      </button>
+                    </form>
+                  </div>
+                )}
+              </div>
             </section>
           )}
 
-          {profile?.role === "admin" && (
+          {profile?.role === "admin" && selectedClassId && (
             <section className="mt-10">
-              <h2 className="mb-4 text-xl font-semibold text-stone-900">Alle hold</h2>
+              <h2 className="mb-4 text-xl font-semibold text-stone-900">
+                Elever og undervisere på valgt hold
+              </h2>
 
-              {classList.length === 0 ? (
-                <p className="text-stone-500">Ingen hold endnu</p>
-              ) : (
-                <ul className="space-y-4">
-                  {classList.map((c) => {
-                    const studentEnrollments = enrollments.filter(
-                      (e) => e.class_id === c.id && e.role === "student"
-                    );
+              <div className="grid gap-6 md:grid-cols-2">
+                <div className="rounded-3xl border border-stone-200 bg-stone-50 p-6">
+                  <h3 className="mb-3 font-semibold text-stone-900">Undervisere</h3>
+                  <ul className="space-y-2">
+                    {enrollments
+                      .filter((e) => e.class_id === selectedClassId && e.role === "teacher")
+                      .map((e) => (
+                        <li key={e.id}>{renderPerson(e.profiles)}</li>
+                      ))}
+                  </ul>
+                </div>
 
-                    const teacherEnrollments = enrollments.filter(
-                      (e) => e.class_id === c.id && e.role === "teacher"
-                    );
-
-                    return (
-                      <li
-                        key={c.id}
-                        className="rounded-3xl border border-stone-200 bg-stone-50 p-6"
-                      >
-                        <div className="text-lg font-semibold text-stone-900">{c.name}</div>
-
-                        <div className="mt-4 text-sm text-stone-700">
-                          <div className="font-semibold text-stone-900">Undervisere</div>
-                          <ul className="ml-5 mt-1 list-disc">
-                            {teacherEnrollments.length > 0 ? (
-                              teacherEnrollments.map((e) => (
-                                <li key={e.id}>
-                                  <div className="font-medium text-stone-900">
-                                    {getDisplayName(e.profiles)}
-                                  </div>
-                                  {getDisplayPhone(e.profiles) && (
-                                    <div className="text-sm text-stone-500">
-                                      {getDisplayPhone(e.profiles)}
-                                    </div>
-                                  )}
-                                </li>
-                              ))
-                            ) : (
-                              <li>Ingen undervisere endnu</li>
-                            )}
-                          </ul>
-                        </div>
-
-                        <div className="mt-4 text-sm text-stone-700">
-                          <div className="font-semibold text-stone-900">Elever</div>
-                          <ul className="ml-5 mt-1 list-disc">
-                            {studentEnrollments.length > 0 ? (
-                              studentEnrollments.map((e) => (
-                                <li key={e.id}>
-                                  <div className="font-medium text-stone-900">
-                                    {getDisplayName(e.profiles)}
-                                  </div>
-                                  {getDisplayPhone(e.profiles) && (
-                                    <div className="text-sm text-stone-500">
-                                      {getDisplayPhone(e.profiles)}
-                                    </div>
-                                  )}
-                                </li>
-                              ))
-                            ) : (
-                              <li>Ingen elever endnu</li>
-                            )}
-                          </ul>
-                        </div>
-
-                        <div className="mt-5">
-                          <div className="font-semibold text-stone-900">Lektionsplan</div>
-                          {renderLessonList(c.id)}
-                        </div>
-
-                        <div className="mt-5">
-                          <div className="font-semibold text-stone-900">Filer</div>
-                          {renderFileList(c.id)}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
+                <div className="rounded-3xl border border-stone-200 bg-stone-50 p-6">
+                  <h3 className="mb-3 font-semibold text-stone-900">Elever</h3>
+                  <ul className="space-y-2">
+                    {enrollments
+                      .filter((e) => e.class_id === selectedClassId && e.role === "student")
+                      .map((e) => (
+                        <li key={e.id}>{renderPerson(e.profiles)}</li>
+                      ))}
+                  </ul>
+                </div>
+              </div>
             </section>
           )}
         </div>

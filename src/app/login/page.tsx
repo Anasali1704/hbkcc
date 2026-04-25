@@ -99,7 +99,7 @@ export default function LoginPage() {
               </div>
 
               <h1 className="text-4xl font-bold tracking-tight text-stone-900">
-                Velkommen til HBKCC - Pre Mahaad
+                Velkommen til HBKCC - Undervisning
               </h1>
 
               <p className="mt-5 text-xl leading-9 text-stone-600">
@@ -129,7 +129,7 @@ export default function LoginPage() {
                 HBKCC Undervisning
               </h2>
               <p className="mt-2 text-sm text-stone-500">
-                Log ind på Pre Mahaad platformen
+                Log ind på Undervisningsplatformen
               </p>
             </div>
 
