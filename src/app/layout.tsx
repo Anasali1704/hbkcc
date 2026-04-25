@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import AppHeader from "../components/app-header";
+import LayoutWrapper from "../components/layout-wrapper";
 
 export const metadata: Metadata = {
   title: "HBKCC Undervisning",
@@ -15,8 +15,7 @@ export default function RootLayout({
   return (
     <html lang="da">
       <body>
-        <AppHeader />
-        {children}
+        <LayoutWrapper>{children}</LayoutWrapper>
       </body>
     </html>
   );

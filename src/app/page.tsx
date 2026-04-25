@@ -12,7 +12,7 @@ export default function HomePage() {
             </div>
 
             <h1 className="mb-4 text-4xl font-bold tracking-tight text-[var(--text-primary)]">
-              Pre Mahaad undervisningsplatform
+              HBKCC undervisningsplatform
             </h1>
 
             <p className="mb-8 max-w-2xl text-lg text-[var(--text-muted)]">
@@ -24,12 +24,7 @@ export default function HomePage() {
               <Link href="/login" className="hbkcc-primary-btn">
                 Gå til login
               </Link>
-              <Link
-                href="/dashboard"
-                className="rounded-xl border border-[var(--border)] bg-white px-4 py-3 font-semibold text-[var(--text-primary)]"
-              >
-                Åbn dashboard
-              </Link>
+            
             </div>
           </div>
 
