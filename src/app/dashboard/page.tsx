@@ -63,6 +63,18 @@ type LessonResourceRow = {
   created_at: string;
 };
 
+type SemesterResourceRow = {
+  id: string;
+  semester_id: string;
+  type: "file" | "link";
+  title: string;
+  description: string | null;
+  file_path: string | null;
+  url: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -143,6 +155,11 @@ export default async function DashboardPage({
     .select("*")
     .order("created_at", { ascending: false });
 
+  const { data: semesterResourcesRaw } = await supabase
+  .from("semester_resources")
+  .select("*")
+  .order("created_at", { ascending: false });  
+
   const enrollments = (enrollmentsRaw ?? []) as EnrollmentRow[];
   const classList = (classes ?? []) as ClassRow[];
   const semesters = (semestersRaw ?? []) as SemesterRow[];
@@ -150,6 +167,7 @@ export default async function DashboardPage({
   const attendance = (attendanceRaw ?? []) as AttendanceRow[];
   const classFiles = (classFilesRaw ?? []) as ClassFileRow[];
   const lessonResources = (lessonResourcesRaw ?? []) as LessonResourceRow[];
+  const semesterResources = (semesterResourcesRaw ?? []) as SemesterResourceRow[];
 
   const myTeacherClasses = classList.filter((c) =>
     enrollments.some(
@@ -577,6 +595,121 @@ export default async function DashboardPage({
     revalidatePath("/dashboard");
   }
 
+  async function uploadSemesterFile(formData: FormData) {
+  "use server";
+
+  const semesterId = formData.get("semesterId") as string;
+  const title = formData.get("semesterResourceTitle") as string;
+  const description = formData.get("semesterResourceDescription") as string;
+  const file = formData.get("semesterResourceFile") as File | null;
+
+  if (!file || file.size === 0) return;
+
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return;
+
+  const fileExt = file.name.split(".").pop() || "bin";
+  const fileName = `${crypto.randomUUID()}.${fileExt}`;
+  const filePath = `semesters/${semesterId}/${fileName}`;
+
+  const arrayBuffer = await file.arrayBuffer();
+  const fileBuffer = Buffer.from(arrayBuffer);
+
+  const { error: uploadError } = await supabase.storage
+    .from("class-files")
+    .upload(filePath, fileBuffer, {
+      contentType: file.type || "application/octet-stream",
+      upsert: false,
+    });
+
+  if (uploadError) {
+    console.error("SEMESTER FILE UPLOAD ERROR:", uploadError);
+    return;
+  }
+
+  const { error: insertError } = await supabase.from("semester_resources").insert({
+    semester_id: semesterId,
+    type: "file",
+    title,
+    description: description || null,
+    file_path: filePath,
+    url: null,
+    created_by: user.id,
+  });
+
+  if (insertError) {
+    console.error("SEMESTER RESOURCE INSERT ERROR:", insertError);
+    return;
+  }
+
+  revalidatePath("/dashboard");
+}
+
+async function addSemesterLink(formData: FormData) {
+  "use server";
+
+  const semesterId = formData.get("semesterId") as string;
+  const title = formData.get("semesterLinkTitle") as string;
+  const description = formData.get("semesterLinkDescription") as string;
+  const url = formData.get("semesterLinkUrl") as string;
+
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return;
+
+  await supabase.from("semester_resources").insert({
+    semester_id: semesterId,
+    type: "link",
+    title,
+    description: description || null,
+    file_path: null,
+    url,
+    created_by: user.id,
+  });
+
+  revalidatePath("/dashboard");
+}
+
+async function deleteSemesterResource(formData: FormData) {
+  "use server";
+
+  const resourceId = formData.get("semesterResourceId") as string;
+
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return;
+
+  const { data: resource } = await supabase
+    .from("semester_resources")
+    .select("*")
+    .eq("id", resourceId)
+    .single();
+
+  if (!resource) return;
+
+  if (resource.type === "file" && resource.file_path) {
+    await supabase.storage.from("class-files").remove([resource.file_path]);
+  }
+
+  await supabase.from("semester_resources").delete().eq("id", resourceId);
+
+  revalidatePath("/dashboard");
+}
+
+
   function getProfile(profileValue: EnrollmentRow["profiles"]) {
     if (Array.isArray(profileValue)) return profileValue[0];
     return profileValue;
@@ -705,6 +838,70 @@ export default async function DashboardPage({
       </ul>
     );
   }
+
+ function renderSemesterResources(semesterId: string) {
+  const resources = semesterResources.filter((r) => r.semester_id === semesterId);
+  const canDelete = profile?.role === "admin" || profile?.role === "teacher";
+
+  if (resources.length === 0) {
+    return <p className="mt-2 text-sm text-stone-500">Ingen semester-materialer endnu.</p>;
+  }
+
+  return (
+    <ul className="mt-3 space-y-3">
+      {resources.map((resource) => (
+        <li
+          key={resource.id}
+          className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="font-medium text-stone-900">{resource.title}</div>
+
+              {resource.description && (
+                <div className="mt-1 text-sm text-stone-500">
+                  {resource.description}
+                </div>
+              )}
+
+              <div className="mt-3">
+                {resource.type === "file" && resource.file_path && (
+                  <a
+                    href={`/api/files?path=${encodeURIComponent(resource.file_path)}`}
+                    className="text-sm font-medium text-[#8f1d22] hover:underline"
+                  >
+                    Download fil
+                  </a>
+                )}
+
+                {resource.type === "link" && resource.url && (
+                  <a
+                    href={resource.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm font-medium text-[#8f1d22] hover:underline"
+                  >
+                    Åbn link
+                  </a>
+                )}
+              </div>
+            </div>
+
+            {canDelete && (
+              <form action={deleteSemesterResource}>
+                <input type="hidden" name="semesterResourceId" value={resource.id} />
+                <button className="rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white">
+                  Slet
+                </button>
+              </form>
+            )}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 
   function renderLessonList(classId: string) {
     const classLessons = lessons.filter(
@@ -1198,7 +1395,88 @@ export default async function DashboardPage({
                 {selectedClass?.name ?? "Valgt hold"} ·{" "}
                 {selectedSemester?.name ?? "Vælg semester"}
               </h2>
+          
+          {selectedSemesterId && (
+  <div className="mb-6 rounded-3xl border border-stone-200 bg-stone-50 p-6">
+    <h3 className="font-semibold text-stone-900">Semester-materialer</h3>
+    {renderSemesterResources(selectedSemesterId)}
 
+    {(profile?.role === "admin" || profile?.role === "teacher") && (
+      <div className="mt-5 grid gap-6 md:grid-cols-2">
+        <div>
+          <h4 className="mb-2 text-sm font-semibold text-stone-900">
+            Upload fil til semester
+          </h4>
+
+          <form action={uploadSemesterFile} className="grid gap-3">
+            <input type="hidden" name="semesterId" value={selectedSemesterId} />
+
+            <input
+              name="semesterResourceTitle"
+              placeholder="Titel"
+              required
+              className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+            />
+
+            <textarea
+              name="semesterResourceDescription"
+              placeholder="Beskrivelse"
+              rows={3}
+              className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+            />
+
+            <input
+              type="file"
+              name="semesterResourceFile"
+              required
+              className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+            />
+
+            <button className="w-fit rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
+              Upload fil
+            </button>
+          </form>
+        </div>
+
+        <div>
+          <h4 className="mb-2 text-sm font-semibold text-stone-900">
+            Tilføj link til semester
+          </h4>
+
+          <form action={addSemesterLink} className="grid gap-3">
+            <input type="hidden" name="semesterId" value={selectedSemesterId} />
+
+            <input
+              name="semesterLinkTitle"
+              placeholder="Titel"
+              required
+              className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+            />
+
+            <textarea
+              name="semesterLinkDescription"
+              placeholder="Beskrivelse"
+              rows={3}
+              className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+            />
+
+            <input
+              name="semesterLinkUrl"
+              type="url"
+              placeholder="https://..."
+              required
+              className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+            />
+
+            <button className="w-fit rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
+              Tilføj link
+            </button>
+          </form>
+        </div>
+      </div>
+    )}
+  </div>
+)}
               <div className="rounded-3xl border border-stone-200 bg-stone-50 p-6">
                 <h3 className="font-semibold text-stone-900">Lektionsplan</h3>
                 {renderLessonList(selectedClassId)}
