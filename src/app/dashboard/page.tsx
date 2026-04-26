@@ -188,8 +188,12 @@ export default async function DashboardPage({
       ? myTeacherClasses
       : myStudentClasses;
 
+  const requestedClassId = params.class;
+
   const selectedClassId =
-    params.class ?? visibleClasses[0]?.id ?? classList[0]?.id ?? "";
+    requestedClassId && visibleClasses.some((c) => c.id === requestedClassId)
+    ? requestedClassId
+    : visibleClasses[0]?.id ?? "";
 
   const semestersForClass = semesters.filter((s) => s.class_id === selectedClassId);
 
@@ -1536,6 +1540,17 @@ async function deleteSemesterResource(formData: FormData) {
                       ))}
                   </ul>
                 </div>
+
+                {visibleClasses.length === 0 && (
+  <div className="rounded-3xl border border-stone-200 bg-stone-50 p-6 text-stone-700">
+    <h2 className="mb-2 text-xl font-semibold text-stone-900">
+      Du er ikke tilmeldt et hold endnu
+    </h2>
+    <p className="text-sm text-stone-500">
+      Kontakt din underviser eller en administrator, som kan tilføje dig til det rigtige hold.
+    </p>
+  </div>
+)}
 
                 <div className="rounded-3xl border border-stone-200 bg-stone-50 p-6">
                   <h3 className="mb-3 font-semibold text-stone-900">Elever</h3>
