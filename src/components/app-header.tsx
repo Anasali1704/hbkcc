@@ -7,10 +7,7 @@ import LogoutButton from "./logout-button";
 
 const navItems = [
   { href: "/dashboard", label: "Lektionsplan" },
-  { href: "/dashboard#feedback", label: "Feedback" },
-  { href: "/attendance", label: "Fravær" },
-  { href: "/dashboard#lessons", label: "Lektioner" },
-  { href: "/dashboard#files", label: "Filer" },
+  { href: "/attendance", label: "Fravær" }
 ];
 
 export default function AppHeader() {
