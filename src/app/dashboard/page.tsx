@@ -908,11 +908,20 @@ async function deleteSemesterResource(formData: FormData) {
 
 
   function renderLessonList(classId: string) {
-    const classLessons = lessons.filter(
-      (lesson) =>
-        lesson.class_id === classId &&
-        lesson.semester_id === selectedSemesterId
-    );
+    const classLessons = lessons
+      .filter(
+        (lesson) =>
+          lesson.class_id === classId &&
+          lesson.semester_id === selectedSemesterId
+  )
+  .sort((a, b) => {
+    const dateCompare =
+      new Date(a.lesson_date).getTime() - new Date(b.lesson_date).getTime();
+
+    if (dateCompare !== 0) return dateCompare;
+
+    return a.title.localeCompare(b.title, "da", { numeric: true });
+  });
 
     if (classLessons.length === 0) {
       return <p className="mt-2 text-sm text-stone-500">Ingen lektioner endnu.</p>;
