@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "../../lib/supabase/server";
+import { getRoleLabel } from "../../lib/roles";
 
 type ProfileRow = {
   id: string;
@@ -11,6 +12,13 @@ type ProfileRow = {
 
 type ClassRow = {
   id: string;
+  name: string;
+  offer_id: string;
+};
+
+type OfferRow = {
+  id: string;
+  slug: string;
   name: string;
 };
 
@@ -44,6 +52,12 @@ type AttendanceRow = {
   status: "present" | "absent";
 };
 
+type ParentStudentRow = {
+  id: string;
+  parent_id: string;
+  student_id: string;
+};
+
 function getProfile(profileValue: EnrollmentRow["profiles"]) {
   if (Array.isArray(profileValue)) return profileValue[0];
   return profileValue;
@@ -56,7 +70,7 @@ function getName(profile: ProfileRow | null | undefined) {
 export default async function AttendancePage({
   searchParams,
 }: {
-  searchParams: Promise<{ class?: string; semester?: string }>;
+  searchParams: Promise<{ class?: string; semester?: string; tilbud?: string }>;
 }) {
   const params = await searchParams;
   const supabase = await createClient();
@@ -88,6 +102,11 @@ export default async function AttendancePage({
     .select("*")
     .order("sort_order", { ascending: true });
 
+  const { data: offersRaw } = await supabase
+    .from("offers")
+    .select("id, slug, name")
+    .eq("active", true);
+
   const { data: enrollmentsRaw } = await supabase.from("enrollments").select(`
     id,
     role,
@@ -103,29 +122,58 @@ export default async function AttendancePage({
 
   const { data: attendanceRaw } = await supabase.from("attendance").select("*");
 
+  const { data: parentStudentsRaw } = await supabase
+    .from("parent_students")
+    .select("*");
+
   const classList = (classesRaw ?? []) as ClassRow[];
+  const offers = (offersRaw ?? []) as OfferRow[];
+  const selectedOffer = offers.find((offer) => offer.slug === params.tilbud);
+
+  if (!selectedOffer) {
+    redirect("/tilbud");
+  }
+
+  const offerClasses = classList.filter(
+    (classRow) => classRow.offer_id === selectedOffer.id
+  );
   const semesters = (semestersRaw ?? []) as SemesterRow[];
   const enrollments = (enrollmentsRaw ?? []) as EnrollmentRow[];
   const lessons = (lessonsRaw ?? []) as LessonRow[];
   const attendance = (attendanceRaw ?? []) as AttendanceRow[];
+  const parentStudents = (parentStudentsRaw ?? []) as ParentStudentRow[];
+  const linkedStudentIds = parentStudents
+    .filter((relation) => relation.parent_id === currentUserId)
+    .map((relation) => relation.student_id);
 
-  const myTeacherClasses = classList.filter((c) =>
+  const myTeacherClasses = offerClasses.filter((c) =>
     enrollments.some(
       (e) => e.class_id === c.id && e.user_id === currentUserId && e.role === "teacher"
     )
   );
 
-  const myStudentClasses = classList.filter((c) =>
+  const myStudentClasses = offerClasses.filter((c) =>
     enrollments.some(
       (e) => e.class_id === c.id && e.user_id === currentUserId && e.role === "student"
     )
   );
 
+  const myParentClasses = offerClasses.filter((c) =>
+    enrollments.some(
+      (e) =>
+        e.class_id === c.id &&
+        e.role === "student" &&
+        linkedStudentIds.includes(e.user_id)
+    )
+  );
+
   const visibleClasses =
     profile?.role === "admin"
-      ? classList
+      ? offerClasses
       : profile?.role === "teacher"
       ? myTeacherClasses
+      : profile?.role === "parent"
+      ? myParentClasses
       : myStudentClasses;
 
   const requestedClassId = params.class;
@@ -170,6 +218,8 @@ export default async function AttendancePage({
   const visibleStudents =
     profile?.role === "student"
       ? studentsForClass.filter((e) => e.user_id === currentUserId)
+      : profile?.role === "parent"
+      ? studentsForClass.filter((e) => linkedStudentIds.includes(e.user_id))
       : studentsForClass;
 
   const totalLessons = semesterLessons.length;
@@ -240,7 +290,7 @@ export default async function AttendancePage({
                 {visibleClasses.map((c) => (
                   <a
                     key={c.id}
-                    href={`/attendance?class=${c.id}`}
+                    href={`/attendance?tilbud=${selectedOffer.slug}&class=${c.id}`}
                     className={`rounded-full px-4 py-2 text-sm font-medium ${
                       selectedClassId === c.id
                         ? "bg-[#8f1d22] text-white"
@@ -256,7 +306,7 @@ export default async function AttendancePage({
                 {semestersForClass.map((s) => (
                   <a
                     key={s.id}
-                    href={`/attendance?class=${selectedClassId}&semester=${s.id}`}
+                    href={`/attendance?tilbud=${selectedOffer.slug}&class=${selectedClassId}&semester=${s.id}`}
                     className={`rounded-full px-4 py-2 text-sm font-medium ${
                       selectedSemesterId === s.id
                         ? "bg-[#8f1d22] text-white"
@@ -277,7 +327,8 @@ export default async function AttendancePage({
                   {selectedSemester?.name ?? "Intet semester valgt"}
                 </p>
                 <p>
-                  <strong>Rolle:</strong> {profile?.role}
+                  <strong>Rolle:</strong>{" "}
+                  {getRoleLabel(profile?.role)}
                 </p>
               </div>
 

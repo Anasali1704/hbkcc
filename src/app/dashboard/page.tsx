@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "../../lib/supabase/server";
+import { canManageTeaching, getRoleLabel } from "../../lib/roles";
 
 type EnrollmentRow = {
   id: string;
@@ -16,6 +17,13 @@ type EnrollmentRow = {
 
 type ClassRow = {
   id: string;
+  name: string;
+  offer_id: string;
+};
+
+type OfferRow = {
+  id: string;
+  slug: string;
   name: string;
 };
 
@@ -75,10 +83,16 @@ type SemesterResourceRow = {
   created_at: string;
 };
 
+type ParentStudentRow = {
+  id: string;
+  parent_id: string;
+  student_id: string;
+};
+
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ class?: string; semester?: string }>;
+  searchParams: Promise<{ class?: string; semester?: string; tilbud?: string }>;
 }) {
   const params = await searchParams;
   const supabase = await createClient();
@@ -101,10 +115,15 @@ export default async function DashboardPage({
     .single();
 
   if (!existingProfile) {
+    const requestedRole = user.user_metadata?.requested_role;
+    const initialRole = requestedRole === "parent" ? "parent" : "student";
+
     await supabase.from("profiles").insert({
       id: user.id,
       email: user.email,
-      role: "student",
+      full_name: user.user_metadata?.full_name ?? null,
+      phone: user.user_metadata?.phone ?? null,
+      role: initialRole,
     });
   }
 
@@ -118,6 +137,11 @@ export default async function DashboardPage({
     .from("classes")
     .select("*")
     .order("name", { ascending: true });
+
+  const { data: offersRaw } = await supabase
+    .from("offers")
+    .select("id, slug, name")
+    .eq("active", true);
 
   const { data: semestersRaw } = await supabase
     .from("semesters")
@@ -137,6 +161,10 @@ export default async function DashboardPage({
     classes(name),
     profiles(email, role, full_name, phone)
   `);
+
+  const { data: parentStudentsRaw } = await supabase
+    .from("parent_students")
+    .select("*");
 
   const { data: lessonsRaw } = await supabase
     .from("lessons")
@@ -162,30 +190,57 @@ export default async function DashboardPage({
 
   const enrollments = (enrollmentsRaw ?? []) as EnrollmentRow[];
   const classList = (classes ?? []) as ClassRow[];
+  const offers = (offersRaw ?? []) as OfferRow[];
+  const selectedOffer = offers.find((offer) => offer.slug === params.tilbud);
+
+  if (!selectedOffer) {
+    redirect("/tilbud");
+  }
+
+  const selectedOfferId = selectedOffer.id;
+
+  const offerClasses = classList.filter(
+    (classRow) => classRow.offer_id === selectedOffer.id
+  );
   const semesters = (semestersRaw ?? []) as SemesterRow[];
   const lessons = (lessonsRaw ?? []) as LessonRow[];
   const attendance = (attendanceRaw ?? []) as AttendanceRow[];
   const classFiles = (classFilesRaw ?? []) as ClassFileRow[];
   const lessonResources = (lessonResourcesRaw ?? []) as LessonResourceRow[];
   const semesterResources = (semesterResourcesRaw ?? []) as SemesterResourceRow[];
+  const parentStudents = (parentStudentsRaw ?? []) as ParentStudentRow[];
+  const linkedStudentIds = parentStudents
+    .filter((relation) => relation.parent_id === currentUserId)
+    .map((relation) => relation.student_id);
 
-  const myTeacherClasses = classList.filter((c) =>
+  const myTeacherClasses = offerClasses.filter((c) =>
     enrollments.some(
       (e) => e.class_id === c.id && e.user_id === currentUserId && e.role === "teacher"
     )
   );
 
-  const myStudentClasses = classList.filter((c) =>
+  const myStudentClasses = offerClasses.filter((c) =>
     enrollments.some(
       (e) => e.class_id === c.id && e.user_id === currentUserId && e.role === "student"
     )
   );
 
+  const myParentClasses = offerClasses.filter((c) =>
+    enrollments.some(
+      (e) =>
+        e.class_id === c.id &&
+        e.role === "student" &&
+        linkedStudentIds.includes(e.user_id)
+    )
+  );
+
   const visibleClasses =
     profile?.role === "admin"
-      ? classList
+      ? offerClasses
       : profile?.role === "teacher"
       ? myTeacherClasses
+      : profile?.role === "parent"
+      ? myParentClasses
       : myStudentClasses;
 
   const requestedClassId = params.class;
@@ -208,7 +263,7 @@ export default async function DashboardPage({
     const name = formData.get("name") as string;
     const supabase = await createClient();
 
-    await supabase.from("classes").insert({ name });
+    await supabase.from("classes").insert({ name, offer_id: selectedOfferId });
 
     revalidatePath("/dashboard");
   }
@@ -264,6 +319,49 @@ export default async function DashboardPage({
       });
     }
 
+    revalidatePath("/dashboard");
+  }
+
+  async function linkParentToStudent(formData: FormData) {
+    "use server";
+
+    const parentId = formData.get("parentId") as string;
+    const studentId = formData.get("studentId") as string;
+    const supabase = await createClient();
+
+    const { data: existing } = await supabase
+      .from("parent_students")
+      .select("id")
+      .eq("parent_id", parentId)
+      .eq("student_id", studentId)
+      .maybeSingle();
+
+    if (!existing) {
+      await supabase.from("parent_students").insert({
+        parent_id: parentId,
+        student_id: studentId,
+      });
+    }
+
+    revalidatePath("/dashboard");
+    revalidatePath("/attendance");
+  }
+
+  async function addUserToOffer(formData: FormData) {
+    "use server";
+
+    const userId = formData.get("offerUserId") as string;
+    const supabase = await createClient();
+
+    await supabase.from("user_offers").upsert(
+      {
+        user_id: userId,
+        offer_id: selectedOfferId,
+      },
+      { onConflict: "user_id,offer_id" }
+    );
+
+    revalidatePath("/tilbud");
     revalidatePath("/dashboard");
   }
 
@@ -742,7 +840,7 @@ async function deleteSemesterResource(formData: FormData) {
 
   function renderFileList(classId: string) {
     const filesForClass = classFiles.filter((file) => file.class_id === classId);
-    const canDelete = profile?.role === "admin" || profile?.role === "teacher";
+    const canDelete = canManageTeaching(profile?.role);
 
     if (filesForClass.length === 0) {
       return <p className="mt-2 text-sm text-stone-500">Ingen filer endnu.</p>;
@@ -782,7 +880,7 @@ async function deleteSemesterResource(formData: FormData) {
 
   function renderLessonResources(lessonId: string) {
     const resources = lessonResources.filter((r) => r.lesson_id === lessonId);
-    const canDelete = profile?.role === "admin" || profile?.role === "teacher";
+    const canDelete = canManageTeaching(profile?.role);
 
     if (resources.length === 0) {
       return <p className="mt-2 text-sm text-stone-500">Ingen materialer endnu.</p>;
@@ -845,7 +943,7 @@ async function deleteSemesterResource(formData: FormData) {
 
  function renderSemesterResources(semesterId: string) {
   const resources = semesterResources.filter((r) => r.semester_id === semesterId);
-  const canDelete = profile?.role === "admin" || profile?.role === "teacher";
+  const canDelete = canManageTeaching(profile?.role);
 
   if (resources.length === 0) {
     return <p className="mt-2 text-sm text-stone-500">Ingen semester-materialer endnu.</p>;
@@ -952,7 +1050,7 @@ async function deleteSemesterResource(formData: FormData) {
                 </div>
               )}
 
-              {(profile?.role === "admin" || profile?.role === "teacher") && (
+              {canManageTeaching(profile?.role) && (
                 <div className="mt-5 space-y-3 border-t border-stone-200 pt-4">
                   <h4 className="text-sm font-semibold text-stone-900">
                     Redigér lektion
@@ -1022,13 +1120,20 @@ async function deleteSemesterResource(formData: FormData) {
                       const status = attendanceRow?.status;
 
                       const canEditAttendance =
-                        profile?.role === "admin" || profile?.role === "teacher";
+                        canManageTeaching(profile?.role);
 
                       const isOwnStudentRow =
                         profile?.role === "student" &&
                         student.user_id === currentUserId;
 
                       if (profile?.role === "student" && !isOwnStudentRow) {
+                        return null;
+                      }
+
+                      if (
+                        profile?.role === "parent" &&
+                        !linkedStudentIds.includes(student.user_id)
+                      ) {
                         return null;
                       }
 
@@ -1117,7 +1222,7 @@ async function deleteSemesterResource(formData: FormData) {
                 {renderLessonResources(lesson.id)}
               </div>
 
-              {(profile?.role === "admin" || profile?.role === "teacher") && (
+              {canManageTeaching(profile?.role) && (
                 <div className="mt-5 space-y-5">
                   <div>
                     <h4 className="mb-2 text-sm font-semibold text-stone-900">
@@ -1205,14 +1310,14 @@ async function deleteSemesterResource(formData: FormData) {
           </h1>
 
           <p className="mb-8 text-stone-500">
-            HBKCC Undervisning · Pre Mahaad
+            {selectedOffer.name}
           </p>
 
           <div className="mb-6 flex flex-wrap gap-3">
             {visibleClasses.map((c) => (
               <a
                 key={c.id}
-                href={`/dashboard?class=${c.id}`}
+                href={`/dashboard?tilbud=${selectedOffer.slug}&class=${c.id}`}
                 className={`rounded-full px-4 py-2 text-sm font-medium ${
                   selectedClassId === c.id
                     ? "bg-[#8f1d22] text-white"
@@ -1228,7 +1333,7 @@ async function deleteSemesterResource(formData: FormData) {
             {semestersForClass.map((s) => (
               <a
                 key={s.id}
-                href={`/dashboard?class=${selectedClassId}&semester=${s.id}`}
+                href={`/dashboard?tilbud=${selectedOffer.slug}&class=${selectedClassId}&semester=${s.id}`}
                 className={`rounded-full px-4 py-2 text-sm font-medium ${
                   selectedSemesterId === s.id
                     ? "bg-[#8f1d22] text-white"
@@ -1245,7 +1350,8 @@ async function deleteSemesterResource(formData: FormData) {
               <strong>Email:</strong> {user.email}
             </p>
             <p>
-              <strong>Rolle:</strong> {profile?.role}
+              <strong>Rolle:</strong>{" "}
+              {getRoleLabel(profile?.role)}
             </p>
             {selectedClass && (
               <p>
@@ -1274,6 +1380,76 @@ async function deleteSemesterResource(formData: FormData) {
                   />
                   <button className="shrink-0 rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
                     Opret
+                  </button>
+                </form>
+              </section>
+
+              <section className="rounded-3xl border border-stone-200 bg-stone-50 p-6">
+                <h2 className="mb-2 text-xl font-semibold text-stone-900">
+                  Tilknyt bruger til {selectedOffer.name}
+                </h2>
+                <p className="mb-4 text-sm text-stone-500">
+                  Tilbuddet bliver synligt på brugerens private tilbudsside.
+                </p>
+                <form action={addUserToOffer} className="flex gap-3">
+                  <select
+                    name="offerUserId"
+                    required
+                    className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+                  >
+                    <option value="">Vælg bruger</option>
+                    {users?.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>
+                        {candidate.full_name || candidate.email} · {getRoleLabel(candidate.role)}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="shrink-0 rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
+                    Tilknyt
+                  </button>
+                </form>
+              </section>
+
+              <section className="rounded-3xl border border-stone-200 bg-stone-50 p-6">
+                <h2 className="mb-2 text-xl font-semibold text-stone-900">
+                  Knyt forælder til elev
+                </h2>
+                <p className="mb-4 text-sm text-stone-500">
+                  Forælderen får læseadgang til elevens lektioner, materialer og fravær.
+                </p>
+                <form action={linkParentToStudent} className="grid gap-3 md:grid-cols-3">
+                  <select
+                    name="parentId"
+                    required
+                    className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+                  >
+                    <option value="">Vælg forælder</option>
+                    {users
+                      ?.filter((u) => u.role === "parent")
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.full_name || u.email}
+                        </option>
+                      ))}
+                  </select>
+
+                  <select
+                    name="studentId"
+                    required
+                    className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+                  >
+                    <option value="">Vælg elev</option>
+                    {users
+                      ?.filter((u) => u.role === "student")
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.full_name || u.email}
+                        </option>
+                      ))}
+                  </select>
+
+                  <button className="rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
+                    Knyt sammen
                   </button>
                 </form>
               </section>
@@ -1364,7 +1540,7 @@ async function deleteSemesterResource(formData: FormData) {
             </div>
           )}
 
-          {(profile?.role === "admin" || profile?.role === "teacher") && selectedClassId && (
+          {canManageTeaching(profile?.role) && selectedClassId && (
             <section className="mt-10 rounded-3xl border border-stone-200 bg-stone-50 p-6">
               <h2 className="mb-4 text-xl font-semibold text-stone-900">
                 Opret lektion i {selectedSemester?.name ?? "valgt semester"}
@@ -1414,7 +1590,7 @@ async function deleteSemesterResource(formData: FormData) {
     <h3 className="font-semibold text-stone-900">Semester-materialer</h3>
     {renderSemesterResources(selectedSemesterId)}
 
-    {(profile?.role === "admin" || profile?.role === "teacher") && (
+    {canManageTeaching(profile?.role) && (
       <div className="mt-5 grid gap-6 md:grid-cols-2">
         <div>
           <h4 className="mb-2 text-sm font-semibold text-stone-900">
@@ -1499,7 +1675,7 @@ async function deleteSemesterResource(formData: FormData) {
                 <h3 className="font-semibold text-stone-900">Filer</h3>
                 {renderFileList(selectedClassId)}
 
-                {(profile?.role === "admin" || profile?.role === "teacher") && (
+                {canManageTeaching(profile?.role) && (
                   <div className="mt-5">
                     <h3 className="mb-2 font-semibold text-stone-900">
                       Upload fil til hold

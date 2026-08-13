@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "../../lib/supabase/client";
+import type { SignupRole } from "../../lib/roles";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -15,6 +16,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<"login" | "signup">("login");
+  const [accountRole, setAccountRole] = useState<SignupRole>("student");
   const [message, setMessage] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -34,12 +36,19 @@ export default function LoginPage() {
         return;
       }
 
-      router.push("/dashboard");
+      router.push("/tilbud");
       router.refresh();
     } else {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          data: {
+            full_name: fullName,
+            phone,
+            requested_role: accountRole,
+          },
+        },
       });
 
       if (error) {
@@ -50,13 +59,13 @@ export default function LoginPage() {
 
       const userId = data.user?.id;
 
-      if (userId) {
+      if (userId && data.session) {
         const { error: profileError } = await supabase.from("profiles").upsert({
           id: userId,
           email,
           full_name: fullName,
           phone,
-          role: "student",
+          role: accountRole,
         });
 
         if (profileError) {
@@ -66,10 +75,15 @@ export default function LoginPage() {
         }
       }
 
-      setMessage("Bruger oprettet. Du kan nu logge ind.");
+      setMessage(
+        data.session
+          ? "Bruger oprettet. Du kan nu fortsætte til portalen."
+          : "Bruger oprettet. Tjek din e-mail for at bekræfte kontoen."
+      );
       setMode("login");
       setFullName("");
       setPhone("");
+      setAccountRole("student");
       setEmail("");
       setPassword("");
     }
@@ -95,15 +109,15 @@ export default function LoginPage() {
 
             <div className="mt-10 max-w-2xl">
               <div className="mb-4 inline-flex rounded-full bg-[#f3e4e1] px-4 py-2 text-sm font-semibold text-[#8f1d22]">
-                HBKCC Undervisning
+                HBKCC – Undervisningsportal
               </div>
 
               <h1 className="text-4xl font-bold tracking-tight text-stone-900">
-                Velkommen til HBKCC - Undervisning
+                Velkommen til HBKCC – Undervisningsportal
               </h1>
 
               <p className="mt-5 text-xl leading-9 text-stone-600">
-                "Whoever follows a path in search of knowledge, Allah will make his path easy for him to Paradise" 
+                &ldquo;Whoever follows a path in search of knowledge, Allah will make his path easy for him to Paradise&rdquo;
                 - Prophet Muhammad (PBUH)
               </p>
             </div>
@@ -126,10 +140,10 @@ export default function LoginPage() {
 
             <div className="mb-6">
               <h2 className="text-3xl font-bold text-stone-900">
-                HBKCC Undervisning
+                HBKCC – Undervisningsportal
               </h2>
               <p className="mt-2 text-sm text-stone-500">
-                Log ind på Undervisningsplatformen
+                Log ind på undervisningsportalen
               </p>
             </div>
 
@@ -161,6 +175,27 @@ export default function LoginPage() {
             <form onSubmit={handleSubmit} className="space-y-5">
               {mode === "signup" && (
                 <>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-stone-900">
+                      Kontotype
+                    </label>
+                    <select
+                      value={accountRole}
+                      onChange={(e) =>
+                        setAccountRole(e.target.value as SignupRole)
+                      }
+                      className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900 outline-none focus:border-[#b7b47a] focus:ring-4 focus:ring-[#b7b47a]/15"
+                    >
+                      <option value="student">Elev</option>
+                      <option value="parent">Forælder</option>
+                    </select>
+                    {accountRole === "parent" && (
+                      <p className="mt-2 text-sm text-stone-500">
+                        En administrator skal knytte din konto til dit barn, før du kan se undervisningen.
+                      </p>
+                    )}
+                  </div>
+
                   <div>
                     <label className="mb-2 block text-sm font-medium text-stone-900">
                       Fulde navn
