@@ -3,8 +3,8 @@ import "./globals.css";
 import LayoutWrapper from "../components/layout-wrapper";
 
 export const metadata: Metadata = {
-  title: "HBKCC Undervisning",
-  description: "Pre Mahaad undervisningsplatform",
+  title: "HBKCC – Undervisningsportal",
+  description: "HBKCC's samlede portal for undervisningstilbud",
 };
 
 export default function RootLayout({

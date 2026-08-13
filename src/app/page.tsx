@@ -8,24 +8,21 @@ export default function HomePage() {
         <div className="hbkcc-card grid gap-10 p-10 md:grid-cols-[1.2fr_1fr] md:items-center">
           <div>
             <div className="mb-4 inline-flex rounded-full bg-[var(--brand-soft)] px-4 py-2 text-sm font-medium text-[var(--brand-red)]">
-              HBKCC Undervisning
+              HBKCC
             </div>
 
             <h1 className="mb-4 text-4xl font-bold tracking-tight text-[var(--text-primary)]">
-              HBKCC undervisningsplatform
+              HBKCC – Undervisningsportal
             </h1>
 
             <p className="mb-8 max-w-2xl text-lg text-[var(--text-muted)]">
-              En samlet platform til lektionsplan, fravær, materialer, filer og
-              undervisningslinks for HBKCC.
+              Én samlet indgang til HBKCC&apos;s undervisningstilbud, lektionsplaner,
+              materialer og fravær.
             </p>
 
-            <div className="flex flex-wrap gap-3">
-              <Link href="/login" className="hbkcc-primary-btn">
-                Gå til login
-              </Link>
-            
-            </div>
+            <Link href="/login" className="hbkcc-primary-btn inline-flex">
+              Log ind på undervisningsportalen
+            </Link>
           </div>
 
           <div className="relative mx-auto h-[180px] w-full max-w-[520px]">
@@ -39,6 +36,7 @@ export default function HomePage() {
             />
           </div>
         </div>
+
       </div>
     </main>
   );
