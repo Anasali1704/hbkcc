@@ -11,10 +11,16 @@ const navItems = [
   { href: "/attendance", label: "Fravær" }
 ];
 
+const offerNames: Record<string, string> = {
+  "pre-mahaad": "Pre Mahaad",
+  "khayrul-barriya-koranskole": "Khayrul Barriya Koranskole",
+};
+
 export default function AppHeader() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const offerSlug = searchParams.get("tilbud");
+  const offerName = offerSlug ? offerNames[offerSlug] ?? "Undervisningstilbud" : "Undervisningstilbud";
 
   const getOfferHref = (href: string) =>
     offerSlug ? `${href}?tilbud=${encodeURIComponent(offerSlug)}` : href;
@@ -43,7 +49,7 @@ export default function AppHeader() {
               <div className="text-[18px] font-semibold tracking-tight text-white">
                 HBKCC – Undervisningsportal
               </div>
-              <div className="text-sm text-white/85">Pre Mahaad</div>
+              <div className="text-sm text-white/85">{offerName}</div>
             </div>
           </Link>
 
@@ -76,7 +82,7 @@ export default function AppHeader() {
             </Link>
             <div className="text-right">
               <div className="text-sm font-semibold text-white">Aktivt tilbud</div>
-              <div className="text-sm text-white/80">Pre Mahaad</div>
+              <div className="text-sm text-white/80">{offerName}</div>
             </div>
             <LogoutButton />
           </div>
