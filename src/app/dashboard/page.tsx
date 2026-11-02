@@ -50,6 +50,12 @@ type AttendanceRow = {
   status: "present" | "absent";
 };
 
+type LessonProgressRow = {
+  lesson_id: string;
+  user_id: string;
+  status: "completed" | "not_completed";
+};
+
 type ClassFileRow = {
   id: string;
   class_id: string;
@@ -173,6 +179,10 @@ export default async function DashboardPage({
 
   const { data: attendanceRaw } = await supabase.from("attendance").select("*");
 
+  const { data: lessonProgressRaw } = await supabase
+    .from("lesson_progress")
+    .select("lesson_id, user_id, status");
+
   const { data: classFilesRaw } = await supabase
     .from("class_files")
     .select("*")
@@ -205,6 +215,7 @@ export default async function DashboardPage({
   const semesters = (semestersRaw ?? []) as SemesterRow[];
   const lessons = (lessonsRaw ?? []) as LessonRow[];
   const attendance = (attendanceRaw ?? []) as AttendanceRow[];
+  const lessonProgress = (lessonProgressRaw ?? []) as LessonProgressRow[];
   const classFiles = (classFilesRaw ?? []) as ClassFileRow[];
   const lessonResources = (lessonResourcesRaw ?? []) as LessonResourceRow[];
   const semesterResources = (semesterResourcesRaw ?? []) as SemesterResourceRow[];
@@ -252,7 +263,10 @@ export default async function DashboardPage({
 
   const semestersForClass = semesters.filter((s) => s.class_id === selectedClassId);
 
-  const selectedSemesterId = params.semester ?? semestersForClass[0]?.id ?? "";
+  const selectedSemesterId =
+    params.semester && semestersForClass.some((semester) => semester.id === params.semester)
+      ? params.semester
+      : semestersForClass[0]?.id ?? "";
 
   const selectedClass = classList.find((c) => c.id === selectedClassId);
   const selectedSemester = semesters.find((s) => s.id === selectedSemesterId);
@@ -266,6 +280,34 @@ export default async function DashboardPage({
     await supabase.from("classes").insert({ name, offer_id: selectedOfferId });
 
     revalidatePath("/dashboard");
+  }
+
+  async function createSemester(formData: FormData) {
+    "use server";
+
+    const classId = formData.get("semesterClassId") as string;
+    const name = (formData.get("semesterName") as string).trim();
+
+    if (!classId || !name) return;
+
+    const supabase = await createClient();
+    const { data: existingSemesters } = await supabase
+      .from("semesters")
+      .select("sort_order")
+      .eq("class_id", classId)
+      .order("sort_order", { ascending: false })
+      .limit(1);
+
+    const nextSortOrder = (existingSemesters?.[0]?.sort_order ?? -1) + 1;
+
+    await supabase.from("semesters").insert({
+      class_id: classId,
+      name,
+      sort_order: nextSortOrder,
+    });
+
+    revalidatePath("/dashboard");
+    revalidatePath("/attendance");
   }
 
   async function addStudentToClass(formData: FormData) {
@@ -419,6 +461,34 @@ export default async function DashboardPage({
         status,
       });
     }
+
+    revalidatePath("/dashboard");
+  }
+
+  async function setLessonProgress(formData: FormData) {
+    "use server";
+
+    const lessonId = formData.get("progressLessonId") as string;
+    const status = formData.get("progressStatus") as string;
+
+    if (!lessonId || !["completed", "not_completed"].includes(status)) return;
+
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    await supabase.from("lesson_progress").upsert(
+      {
+        lesson_id: lessonId,
+        user_id: user.id,
+        status,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "lesson_id,user_id" }
+    );
 
     revalidatePath("/dashboard");
   }
@@ -1050,6 +1120,49 @@ async function deleteSemesterResource(formData: FormData) {
                 </div>
               )}
 
+              {profile?.role === "student" && (
+                <div className="mt-5 rounded-2xl border border-stone-200 bg-white p-4">
+                  {(() => {
+                    const ownProgress = lessonProgress.find(
+                      (progress) =>
+                        progress.lesson_id === lesson.id &&
+                        progress.user_id === currentUserId
+                    );
+
+                    return (
+                      <>
+                        <div className="font-medium text-stone-900">
+                          Har du lavet lektionen?
+                        </div>
+                        <div className="mt-1 text-sm text-stone-500">
+                          Din status: {ownProgress?.status === "completed"
+                            ? "✅ Lavet"
+                            : ownProgress?.status === "not_completed"
+                            ? "⏳ Ikke lavet endnu"
+                            : "Ikke markeret"}
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <form action={setLessonProgress}>
+                            <input type="hidden" name="progressLessonId" value={lesson.id} />
+                            <input type="hidden" name="progressStatus" value="completed" />
+                            <button className="rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white">
+                              ✅ Ja, den er lavet
+                            </button>
+                          </form>
+                          <form action={setLessonProgress}>
+                            <input type="hidden" name="progressLessonId" value={lesson.id} />
+                            <input type="hidden" name="progressStatus" value="not_completed" />
+                            <button className="rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white">
+                              ⏳ Ikke endnu
+                            </button>
+                          </form>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+
               {canManageTeaching(profile?.role) && (
                 <div className="mt-5 space-y-3 border-t border-stone-200 pt-4">
                   <h4 className="text-sm font-semibold text-stone-900">
@@ -1119,6 +1232,12 @@ async function deleteSemesterResource(formData: FormData) {
 
                       const status = attendanceRow?.status;
 
+                      const progressStatus = lessonProgress.find(
+                        (progress) =>
+                          progress.lesson_id === lesson.id &&
+                          progress.user_id === student.user_id
+                      )?.status;
+
                       const canEditAttendance =
                         canManageTeaching(profile?.role);
 
@@ -1159,6 +1278,13 @@ async function deleteSemesterResource(formData: FormData) {
                                   : status === "absent"
                                   ? "Fraværende"
                                   : "Ikke registreret"}
+                              </div>
+                              <div className="mt-1 text-sm text-stone-500">
+                                Lektion: {progressStatus === "completed"
+                                  ? "✅ Lavet"
+                                  : progressStatus === "not_completed"
+                                  ? "⏳ Ikke lavet endnu"
+                                  : "Ikke markeret"}
                               </div>
                             </div>
 
@@ -1345,6 +1471,29 @@ async function deleteSemesterResource(formData: FormData) {
             ))}
           </div>
 
+          {canManageTeaching(profile?.role) && selectedClassId && (
+            <section className="mb-8 rounded-3xl border border-stone-200 bg-stone-50 p-6">
+              <h2 className="mb-2 text-xl font-semibold text-stone-900">
+                Opret semester
+              </h2>
+              <p className="mb-4 text-sm text-stone-500">
+                Semesteret oprettes kun på {selectedClass?.name ?? "det valgte hold"}.
+              </p>
+              <form action={createSemester} className="flex gap-3">
+                <input type="hidden" name="semesterClassId" value={selectedClassId} />
+                <input
+                  name="semesterName"
+                  placeholder="F.eks. Efterår 2026"
+                  required
+                  className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
+                />
+                <button className="shrink-0 rounded-xl bg-[#8f1d22] px-4 py-2.5 text-sm font-semibold text-white">
+                  Opret semester
+                </button>
+              </form>
+            </section>
+          )}
+
           <div className="mb-8 rounded-2xl bg-stone-50 px-5 py-4 text-stone-700">
             <p>
               <strong>Email:</strong> {user.email}
@@ -1483,7 +1632,7 @@ async function deleteSemesterResource(formData: FormData) {
                     className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
                   >
                     <option value="">Vælg hold</option>
-                    {classList.map((c) => (
+                    {offerClasses.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
                       </option>
@@ -1525,7 +1674,7 @@ async function deleteSemesterResource(formData: FormData) {
                     className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-stone-900"
                   >
                     <option value="">Vælg hold</option>
-                    {classList.map((c) => (
+                    {offerClasses.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
                       </option>
