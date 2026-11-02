@@ -57,24 +57,6 @@ export default function LoginPage() {
         return;
       }
 
-      const userId = data.user?.id;
-
-      if (userId && data.session) {
-        const { error: profileError } = await supabase.from("profiles").upsert({
-          id: userId,
-          email,
-          full_name: fullName,
-          phone,
-          role: accountRole,
-        });
-
-        if (profileError) {
-          setMessage(profileError.message);
-          setLoading(false);
-          return;
-        }
-      }
-
       setMessage(
         data.session
           ? "Bruger oprettet. Du kan nu fortsætte til portalen."

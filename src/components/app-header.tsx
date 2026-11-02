@@ -33,7 +33,7 @@ export default function AppHeader() {
     <header className="sticky top-0 z-40 border-b border-[#d8cfc4] bg-[#f6f3ef]">
       <div className="mx-auto max-w-[1500px] px-6 py-3">
         <div className="flex items-center justify-between gap-6 rounded-[20px] border border-[#8f1d22]/20 bg-[#8f1d22] px-6 py-6 shadow-[0_10px_24px_rgba(143,29,34,0.18)]">
-          <Link href="/dashboard" className="flex items-center gap-4">
+          <Link href={getOfferHref("/dashboard")} className="flex items-center gap-4">
             <div className="relative h-11 w-13 overflow-hidden rounded-full bg-white/12 ring-1 ring-white/25">
               <Image
                 src="/logos/hbkcc-mark.png"
